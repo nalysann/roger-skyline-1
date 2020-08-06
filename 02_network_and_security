@@ -1,0 +1,10 @@
+1.  Non-root user is usually created during OS installation.
+
+2.  First of all we need to install sudo with `apt install sudo`.
+    Then we should either add 'username ALL=(ALL:ALL) [NOPASSWD:]ALL' line
+    to '# User privilege specification' section in the sudoers file or add
+    non-root user to sudo group with `usermod -aG sudo username` or
+    `sudo gpasswd -a username sudo` and optionally add 'NOPASSWD' to sudo
+    group in the sudoers file.
+
+3.
