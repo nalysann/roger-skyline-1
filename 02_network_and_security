@@ -7,4 +7,132 @@
     `sudo gpasswd -a username sudo` and optionally add 'NOPASSWD' to sudo
     group in the sudoers file.
 
-3.
+3.  We have to edit /etc/network/interface file. Either put interface
+    configuration in this file, or create separate files for each interface
+    in /etc/network/interfaces.d directory. Default VirtualBox network is
+    10.0.2.*/24, default gateway is 10.0.2.2, pick free address from
+    10.0.2.* range and use it as static IP. Broadcast address will be set
+    automatically. To apply changes use `systemctl restart networking`. To
+    check interface status use `ip a` and `ip r`. Possible configuration:
+
+    auto lo
+    iface lo inet loopback
+
+    auto enp0s3
+    allow-hotplug enp0s3
+    iface enp0s3 inet static
+        address 10.0.2.42
+        netmask 30
+        gateway 10.0.2.2
+
+    auto enp0s8
+    allow-hotplug enp0s8
+    iface enp0s8 inet static
+        address 192.168.56.42
+        netmask 24
+
+4.  To allow ssh connection from the host we can do one of these:
+        (a) Use bridged adapter (currently disabled by bocal)
+        (b) Use port forwarding
+        (c) Use host-only network
+
+    To configure ssh connection we have to edit /etc/ssh/sshd_config file.
+    Uncomment line 'Port 22' and change the port to your liking (preferably from
+    the range 49152..65535). Uncomment 'PermitRootLogin ...' and change it to
+    '... no' to completely prohibit root access via ssh. Generate ssh keys on the
+    host with `ssh-keygen` and add host to list of authorized hosts on guest with
+    `ssh-copy-id [-p port] -i ~/.ssh/id_rsa.pub username@guest_domain_or_ip`. Then
+    prohibit password authentication by uncommenting line 'PasswordAuthentication yes'
+    and changing it to '... no'.
+
+5.  We will manage interaction with the outside services, DoS and port scanning
+    protection with iptables. We will need the following rules:
+
+    iptables -F
+
+    iptables -P INPUT DROP
+    iptables -P FORWARD DROP
+    iptables -P OUTPUT ACCEPT
+
+    iptables -A INPUT -i lo -p all -j ACCEPT
+
+    iptables -A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+    iptables -A INPUT -p tcp ! --syn -m conntrack --ctstate NEW -j DROP
+    iptables -A INPUT -f -j DROP
+
+    iptables -A INPUT -m recent --rcheck --seconds 3600 --hitcount 10 -j RETURN
+    iptables -A INPUT -m recent --rcheck --seconds 60 --hitcount 2 -j RETURN
+    iptables -A INPUT -m recent --set
+
+    iptables -A INPUT -p tcp -s 192.168.56.1 --dport 54242 -m conntrack --ctstate NEW,ESTABLISHED -j ACCEPT
+    iptables -A INPUT -p tcp --dport 54242 -m conntrack --ctstate NEW -m recent --update --seconds 60 --hitcount 10 -j DROP
+    iptables -A INPUT -p tcp --dport 54242 -m conntrack --ctstate NEW -m recent --set
+
+    iptables -N port_scan
+    iptables -A INPUT -p tcp --tcp-flags SYN,ACK,FIN,RST RST -j port_scan
+    iptables -A port_scan -m limit --limit 1/s --limit-burst 2 -j RETURN
+    iptables -A port_scan -j DROP
+
+    iptables -N syn_flood
+    iptables -A INPUT -p tcp --syn -j syn_flood
+    iptables -A syn_flood -m limit --limit 1/s --limit-burst 3 -j RETURN
+    iptables -A syn_flood -j DROP
+
+    iptables -A INPUT -p tcp --tcp-flags ALL ALL -j DROP
+    iptables -A INPUT -p tcp --tcp-flags ALL NONE -j DROP
+    iptables -A INPUT –p tcp –-tcp-flags FIN,ACK FIN -j DROP
+    iptables -I INPUT -p tcp -m osf --genre NMAP -j DROP
+
+    iptables -A INPUT -p tcp --dport 80 -j ACCEPT
+    iptables -A INPUT -p tcp --dport 443 -j ACCEPT
+
+    Get iptables-persistent, then save current iptables configuration with
+    `iptables-save /etc/iptables/rules.v4` (or it can be done during intallation of
+    iptables-persistent).
+
+6.  To get enabled services use `systemctl list-unit-files --all --type=service --state=enabled`.
+    To disable service use `systemctl disable service_name`. To stop currently running service
+    use `systemctl stop service_name`. If needed mask service with `systemctl mask service_name`.
+    Possible list of enabled services:
+
+    autovt@.service
+    cron.service
+    dbus-org.freedesktop.timesync1.service
+    getty@.service
+    netfilter-persistent.service
+    networking.service
+    ssh.service
+    sshd.service
+    systemd-timesyncd.service
+
+7.  Use `crontab -e` to add the following jobs:
+
+    0 4 * * mon sudo /etc/cron.d/update_script.sh
+    @reboot sudo /etc/cron.d/update_script.sh
+
+    In /etc/cron.d create a script update_script.sh containing:
+
+    #!/bin/bash
+
+    LOG=/var/log/update_script.log
+    date >> $LOG 2>/dev/null
+    echo '' >> $LOG 2>/dev/null
+    sudo apt update >> $LOG 2>/dev/null
+    echo '' >> $LOG 2>/dev/null
+    sudo apt upgrade >> $LOG 2>/dev/null
+    echo '' >> $LOG 2>/dev/null
+    chmod 600 $LOG
+
+8.  Use `crontab -e` to add the following job:
+
+    @midnight sudo /etc/cron.d/crontab_script.sh
+
+    In /etc/cron.d create a script crontab_script.sh containing:
+
+    #!/bin/bash
+
+    DIFF=$(diff /etc/crontab.old /etc/crontab)
+    sudo cp /etc/crontab /etc/crontab.old
+    if [ "$DIFF" != "" ] ; then
+      echo $DIFF | mail -s '/etc/crontab has been modified' root
+    fi

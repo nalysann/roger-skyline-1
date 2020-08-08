@@ -1,4 +1,4 @@
 1.  VirtualBox on macOS uses GiB for disk size, while Debian uses GB during partition.
     4.2 GiB == 4.50972 GB
 
-2.  To keep your packages updated use `[sudo] apt update` and `[sudo] apt upgrade`.
+2.  To keep your packages updated use `apt update` and `apt upgrade`.
